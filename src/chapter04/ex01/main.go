@@ -1,5 +1,3 @@
-// ２つのSHA256ハッシュで異なるビットの数を数える関数を書きなさい(2.6.2節のPopCountを参照)
-
 package main
 
 import (
