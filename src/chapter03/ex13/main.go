@@ -1,5 +1,3 @@
-// できるだけコンパクトにKB、MB、...、YBまでのconst宣言を書きなさい
-
 package main
 
 import "fmt"
