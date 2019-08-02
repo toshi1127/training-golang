@@ -9,13 +9,8 @@ import (
 func main() {
 	p := "subject: %s\ncandidate%s\nisAnagram:%v\n"
 
-	sub := "あとうかい"
-	can := "かとうあい"
-
-	fmt.Printf(p, sub, can, isAnagram(sub, can))
-
-	sub = "ないようがいい"
-	can = "いいようがない"
+	sub := "ないようがいい"
+	can := "いいようがない"
 
 	fmt.Printf(p, sub, can, isAnagram(sub, can))
 
