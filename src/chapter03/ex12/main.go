@@ -32,4 +32,4 @@ func alphagram(s string) string { // 配列の中身をソート(アナグラム
 	chars := strings.Split(strings.ToLower(s), "") // ToLower: 文字列sをUnicodeの小文字にマッピングしたコピーを返す。
 	sort.Strings(chars)
 	return strings.Join(chars, "")
-}
+} //UTF-8のバイト列じゃなくてルーンで比較した方が’

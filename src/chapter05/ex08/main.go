@@ -65,7 +65,7 @@ func forEachNode(n *html.Node, pre, post func(*html.Node) bool) bool {
 	}
 
 	if post != nil {
-		_ = post(n) /*要らないけど問題の指定上残している*/
+		_ = post(n)
 	}
 	return true
 }

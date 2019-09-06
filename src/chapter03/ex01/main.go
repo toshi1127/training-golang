@@ -63,6 +63,6 @@ func f(x, y float64) float64 {
 	if isValid(result) {
 		return result
 	} else {
-		return 0
+		return 0 // 0を返してはいけないぞ
 	}
 }

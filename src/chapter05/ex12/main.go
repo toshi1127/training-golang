@@ -1,4 +1,4 @@
-package ex12
+package main
 
 import (
 	"fmt"
