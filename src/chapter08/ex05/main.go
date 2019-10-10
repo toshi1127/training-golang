@@ -11,7 +11,6 @@ import (
 )
 
 func main() {
-	//renderWithGoRoutine(os.Stdout)
 	renderWithGoRoutine2(os.Stdout)
 }
 

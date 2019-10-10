@@ -68,7 +68,6 @@ func handleConn(conn net.Conn) {
 	for input.Scan() {// メッセージの受付
 		messages <- who + ": " + input.Text()
 	}
-	// NOTE: ignoring potential errors from input.Err()
 
 	leaving <- c
 	messages <- who + " has left"
@@ -77,7 +76,7 @@ func handleConn(conn net.Conn) {
 
 func clientWriter(conn net.Conn, ch <-chan string) {
 	for msg := range ch {
-		fmt.Fprintln(conn, msg) // NOTE: ignoring network errors
+		fmt.Fprintln(conn, msg)
 	}
 }
 

@@ -15,13 +15,13 @@ func main() {
 	}
 	done := make(chan struct{})
 	go func() {
-		io.Copy(os.Stdout, conn) // NOTE: ignoring errors
+		io.Copy(os.Stdout, conn)
 		log.Println("done")
-		done <- struct{}{} // signal the main goroutine
+		done <- struct{}{}
 	}()
 	mustCopy(tcpConn, os.Stdin)
 	tcpConn.CloseWrite()
-	<-done // wait for background goroutine to finish
+	<-done
 	tcpConn.CloseRead()
 }
 

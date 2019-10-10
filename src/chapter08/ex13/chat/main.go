@@ -49,7 +49,7 @@ func broadcaster() {
 }
 
 func handleConn(conn net.Conn) {
-	ch := make(chan string) // outgoing client messages
+	ch := make(chan string)
 	go clientWriter(conn, ch)
 
 	who := conn.RemoteAddr().String()
@@ -66,7 +66,6 @@ func handleConn(conn net.Conn) {
 		messages <- who + ": " + input.Text()
 		timer.Reset(limitTimeout)
 	}
-	// NOTE: ignoring potential errors from input.Err()
 
 	leaving <- client{who, ch}
 	messages <- who + " has left"
@@ -75,7 +74,7 @@ func handleConn(conn net.Conn) {
 
 func clientWriter(conn net.Conn, ch <-chan string) {
 	for msg := range ch {
-		fmt.Fprintln(conn, msg) // NOTE: ignoring network errors
+		fmt.Fprintln(conn, msg)
 	}
 }
 

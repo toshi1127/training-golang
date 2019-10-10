@@ -30,9 +30,7 @@ func main() {
 	go func() { links <- root }()
 	unseenLinks := filterDuplicateLinks(links)
 	crawl(unseenLinks, links, linkFilter, *nWorkers)
-	// responses := crawl(unseenLinks, links, linkFilter, *nWorkers)
 	filepath.Abs(*saveDir)
-	// saveDirAbs, err := filepath.Abs(*saveDir)
 	if err != nil {
 		log.Fatal(err)
 	}
