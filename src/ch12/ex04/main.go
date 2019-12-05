@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"fmt"
 	"reflect"
-	"strings"
+	"strconv"
+	"text/scanner"
 )
 
+// TODO: テストコード
 func main() {
 	type Movie struct {
 		Title, Subtitle string
@@ -34,147 +36,201 @@ func main() {
 			"Best Picture (Nomin.)",
 		},
 	}
-
-	// Encode it
-	data, _ := Marshal(strangelove)
-	fmt.Println(string(data))
-}
-
-type printer struct {
-	buf    bytes.Buffer
-	indent int
-	stack  []int
-}
-
-func (p *printer) Push(indent int) {
-	p.stack = append(p.stack, indent)
-	p.indent += indent
-}
-
-func (p *printer) Pop() {
-	last := p.stack[len(p.stack)-1]
-	p.stack = p.stack[:len(p.stack)-1]
-	p.indent -= last
-}
-
-func (p *printer) PrintIndent() {
-	p.buf.WriteString(strings.Repeat(" ", p.indent))
-}
-
-func (p *printer) Print(s string) {
-	p.buf.WriteString(s)
-}
-
-//!+Marshal
-// Marshal encodes a Go value in S-expression form.
-func Marshal(v interface{}) ([]byte, error) {
-	var buf bytes.Buffer
-	p := printer{buf, 0, []int{}}
-	if err := encodeIndent(&p, reflect.ValueOf(v)); err != nil {
-		return nil, err
+	data, err := Marshal(strangelove)
+	if err != nil {
+		fmt.Print(err)
 	}
-	return p.buf.Bytes(), nil
+	fmt.Print(string(data))
 }
 
-//!-Marshal
-
-// encode writes to buf an S-expression representation of v.
-//!+encode
-func encodeIndent(p *printer, v reflect.Value) error {
+func encode(buf *bytes.Buffer, v reflect.Value, indent int) error {
 	switch v.Kind() {
 	case reflect.Invalid:
-		p.Print("nil")
-
-	case reflect.Int, reflect.Int8, reflect.Int16,
-		reflect.Int32, reflect.Int64:
-		p.Print(fmt.Sprintf("%d", v.Int()))
-
-	case reflect.Uint, reflect.Uint8, reflect.Uint16,
-		reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		p.Print(fmt.Sprintf("%d", v.Uint()))
-
+		buf.WriteString("nil")
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		fmt.Fprintf(buf, "%d", v.Int())
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		fmt.Fprintf(buf, "%d", v.Uint())
 	case reflect.String:
-		p.Print(fmt.Sprintf("%q", v.String()))
-
+		fmt.Fprintf(buf, "%q", v.String())
 	case reflect.Ptr:
-		// return encode(buf, v.Elem())
-
-	case reflect.Array, reflect.Slice: // (value ...)
-		p.Print("(")
-		p.Push(1)
+		return encode(buf, v.Elem(), indent)
+	case reflect.Array, reflect.Slice:
+		buf.WriteByte('(')
 		for i := 0; i < v.Len(); i++ {
 			if i > 0 {
-				p.Print("\n")
-				p.PrintIndent()
+				fmt.Fprintf(buf, "\n%*s", indent, "")
 			}
-			if err := encodeIndent(p, v.Index(i)); err != nil {
+			if err := encode(buf, v.Index(i), indent); err != nil {
 				return err
 			}
 		}
-		p.Print(")")
-		p.Pop()
-	case reflect.Struct: // ((name value) ...)
-		p.Print("(")
-		p.Push(1)
+		buf.WriteByte(')')
+	case reflect.Struct:
+		buf.WriteByte('(')
 		for i := 0; i < v.NumField(); i++ {
 			if i > 0 {
-				p.Print("\n")
-				p.PrintIndent()
+				fmt.Fprintf(buf, "\n%*s", indent, "")
 			}
-			p.Push(len(fmt.Sprintf("(%s ", v.Type().Field(i).Name)))
-			p.Print(fmt.Sprintf("(%s ", v.Type().Field(i).Name))
-			if err := encodeIndent(p, v.Field(i)); err != nil {
+			start := buf.Len()
+			fmt.Fprintf(buf, "(%s ", v.Type().Field(i).Name)
+			if err := encode(buf, v.Field(i), indent+buf.Len()-start); err != nil {
 				return err
 			}
-			p.Print(")")
-			p.Pop()
 		}
-		p.Print(")")
-		p.Pop()
-
-	case reflect.Map: // ((key value) ...)
-		p.Print("(")
-		p.Push(1)
+		buf.WriteByte(')')
+	case reflect.Map:
+		buf.WriteByte('(')
 		for i, key := range v.MapKeys() {
 			if i > 0 {
-				p.Print("\n")
-				p.PrintIndent()
+				fmt.Fprintf(buf, "\n%*s", indent, " ")
 			}
-			p.Print("(")
-			if err := encodeIndent(p, key); err != nil {
+			start := buf.Len()
+			buf.WriteByte('(')
+			if err := encode(buf, key, indent); err != nil {
 				return err
 			}
-			if err := encodeIndent(p, v.MapIndex(key)); err != nil {
+			buf.WriteByte(' ')
+			if err := encode(buf, v.MapIndex(key), indent+buf.Len()-start); err != nil {
 				return err
 			}
-			p.Print(")")
+			buf.WriteByte(')')
 		}
-		p.Print(")")
-		p.Pop()
-
+		buf.WriteByte(')')
 	case reflect.Bool:
 		if v.Bool() {
-			p.Print("t")
+			buf.WriteByte('t')
 		} else {
-			p.Print("nil")
+			buf.WriteString("nil")
 		}
 	case reflect.Float32, reflect.Float64:
-		p.Print(fmt.Sprintf("%g", v.Float()))
-
+		fmt.Fprintf(buf, "%g", v.Float())
 	case reflect.Complex64, reflect.Complex128:
 		c := v.Complex()
-		p.Print(fmt.Sprintf("#C(%g, %g)", real(c), imag(c)))
-
+		fmt.Fprintf(buf, "#C(%g %g)", real(c), imag(c))
 	case reflect.Interface:
-		str := fmt.Sprintf("(%q", reflect.Indirect(v).Type())
-		p.Print(str)
-		p.Push(len(str))
-		encodeIndent(p, reflect.Indirect(v).Elem())
-		p.Pop()
-		p.Print(")")
-
-	default: // float, complex, bool, chan, func, interface
+		fmt.Fprintf(buf, "%q", reflect.Indirect(v).Type())
+		encode(buf, reflect.Indirect(v).Elem(), indent)
+		buf.WriteByte(')')
+	default:
 		return fmt.Errorf("unsupported type: %s", v.Type())
 	}
 	return nil
+}
+
+func Marshal(v interface{}) ([]byte, error) {
+	var buf bytes.Buffer
+	if err := encode(&buf, reflect.ValueOf(v), 0); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func Unmarshal(data []byte, out interface{}) (err error) {
+	lex := &lexer{scan: scanner.Scanner{Mode: scanner.GoTokens}}
+	lex.scan.Init(bytes.NewReader(data))
+	lex.next()
+	defer func() {
+		if x := recover(); x != nil {
+			err = fmt.Errorf("error at %s: %v", lex.scan.Position, x)
+		}
+	}()
+	read(lex, reflect.ValueOf(out).Elem())
+	return nil
+}
+
+type lexer struct {
+	scan  scanner.Scanner
+	token rune
+}
+
+func (lex *lexer) next()        { lex.token = lex.scan.Scan() }
+func (lex *lexer) text() string { return lex.scan.TokenText() }
+func (lex *lexer) consume(want rune) {
+	if lex.token != want {
+		panic(fmt.Sprintf("got %q, want %q", lex.text(), want))
+	}
+	lex.next()
+}
+
+func read(lex *lexer, v reflect.Value) {
+	switch lex.token {
+	case scanner.Ident:
+		// The only valid identifiers are
+		// "nil" and struct field names.
+		if lex.text() == "nil" {
+			v.Set(reflect.Zero(v.Type()))
+			lex.next()
+			return
+		}
+	case scanner.String:
+		s, _ := strconv.Unquote(lex.text()) // NOTE: ignoring errors
+		v.SetString(s)
+		lex.next()
+		return
+	case scanner.Int:
+		i, _ := strconv.Atoi(lex.text()) // NOTE: ignoring errors
+		v.SetInt(int64(i))
+		lex.next()
+		return
+	case '(':
+		lex.next()
+		readList(lex, v)
+		lex.next() // consume ')'
+		return
+	}
+	panic(fmt.Sprintf("unexpected token %q", lex.text()))
+}
+
+func readList(lex *lexer, v reflect.Value) {
+	switch v.Kind() {
+	case reflect.Array: // (item ...)
+		for i := 0; !endList(lex); i++ {
+			read(lex, v.Index(i))
+		}
+
+	case reflect.Slice: // (item ...)
+		for !endList(lex) {
+			item := reflect.New(v.Type().Elem()).Elem()
+			read(lex, item)
+			v.Set(reflect.Append(v, item))
+		}
+
+	case reflect.Struct: // ((name value) ...)
+		for !endList(lex) {
+			lex.consume('(')
+			if lex.token != scanner.Ident {
+				panic(fmt.Sprintf("got token %q, want field name", lex.text()))
+			}
+			name := lex.text()
+			lex.next()
+			read(lex, v.FieldByName(name))
+			lex.consume(')')
+		}
+
+	case reflect.Map: // ((key value) ...)
+		v.Set(reflect.MakeMap(v.Type()))
+		for !endList(lex) {
+			lex.consume('(')
+			key := reflect.New(v.Type().Key()).Elem()
+			read(lex, key)
+			value := reflect.New(v.Type().Elem()).Elem()
+			read(lex, value)
+			v.SetMapIndex(key, value)
+			lex.consume(')')
+		}
+
+	default:
+		panic(fmt.Sprintf("cannot decode list into %v", v.Type()))
+	}
+}
+
+func endList(lex *lexer) bool {
+	switch lex.token {
+	case scanner.EOF:
+		panic("end of file")
+	case ')':
+		return true
+	}
+	return false
 }
