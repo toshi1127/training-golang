@@ -8,21 +8,21 @@ import (
 	"path/filepath"
 )
 
-func WalkTargetDir(path string, name string, printOnly bool) error {
+func WalkTargetDir(path string, name string, isPrintOnly bool) error {
 	// ioutil.ReadDir
 	contents, err := ioutil.ReadDir(path)
 	if err != nil {
-		return fmt.Errorf("failed to read content of directory %v: %v", path, err)
+		return fmt.Errorf("failed: read directory %v: %v", path, err)
 	}
 	for _, file := range contents {
 		absolutePath := filepath.Join(path, file.Name())
 
 		if file.IsDir() && file.Name() == name {
-			if printOnly {
+			if isPrintOnly {
 				fmt.Fprintln(os.Stdout, absolutePath)
 			} else {
 				if err := os.RemoveAll(absolutePath); err != nil {
-					return fmt.Errorf("failed to remove directory %s: %v", absolutePath, err)
+					return fmt.Errorf("failed: remove directory %s: %v", absolutePath, err)
 				}
 			}
 
@@ -31,7 +31,7 @@ func WalkTargetDir(path string, name string, printOnly bool) error {
 		}
 
 		if file.IsDir() {
-			if err := WalkTargetDir(absolutePath, name, printOnly); err != nil {
+			if err := WalkTargetDir(absolutePath, name, isPrintOnly); err != nil {
 				return err
 			}
 		}
@@ -45,7 +45,7 @@ var (
 )
 
 func main() {
-	dirName := flag.Bool("dir", false, "output found directories only - do not remove")
+	isPrintOnly := flag.Bool("dir", false, "output found directories only - do not remove")
 	flag.Parse()
 
 	path := "."
@@ -56,14 +56,14 @@ func main() {
 
 	absolutePath, err := filepath.Abs(path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to parse given path %s: %v\n", path, err)
+		fmt.Fprintf(os.Stderr, "failed: %s: %v\n", path, err)
 		os.Exit(errorParseExitCode)
 	}
 
-	err = WalkTargetDir(absolutePath, "node_modules", *dirName)
-	err = WalkTargetDir(absolutePath, "bundle", *dirName)
+	err = WalkTargetDir(absolutePath, "node_modules", *isPrintOnly)
+	err = WalkTargetDir(absolutePath, "bundle", *isPrintOnly)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "purging failed with an error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "failed: %v\n", err)
 		os.Exit(errorExitCode)
 	}
 }
