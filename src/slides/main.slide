@@ -1,0 +1,48 @@
+Go研修を終えての感想と作ったツールについて
+Go研修 第n回
+2 Dec 2019
+Tags: golang
+
+松本　駿
+RTC
+toshi.matsumoto.3n@gmail.com
+https://github.com/toshi1127
+
+
+* About me
+*松本駿*
+1996年生まれ
+O型
+
+- 2019/04　RTC 新卒入社
+
+SUUMOでフロントエンド(パフォーマンス改善とか)やってる
+
+* Go研修前後での変化
+*before*
+前日に失踪しようとする
+.image image/befor.png
+
+* Go研修前後での変化
+*after*
+
+*Go言語やってよかった！*
+エンジニア経験が豊富でもないにもかかわらず、あまり計画的にできず、とけていない問題もありましたが。。。。
+
+- 「誰が書いても一定のクオリティのコードが強制される」
+- 例外を必ず扱うような言語機能のありがたさ
+    - try catchみたいなことも、panic と defer、recoverでできる
+- 埋め込みによる委譲
+    - コード量少ないし、外部依存しているコードのテスト書くときに便利そう
+- 言語自体の学習コストが低い(Goらしいコードを書くのには鍛錬が必要そう...)
+
+* 作ったもの
+
+* node_modulesがデカすぎる
+*しんどい*
+.image image/full-ssd.jpg
+
+* ディレクトリ配下のnode_modulesと(vendor/bundle)を一掃するCLIを作った
+*😄*
+.image image/demo_1.png
+.image image/demo_2.png

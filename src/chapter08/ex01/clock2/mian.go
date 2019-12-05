@@ -20,7 +20,7 @@ func handleConn(c net.Conn) {
 	}
 }
 
-var port = flag.Int("port", 8000, "Port")
+var port = flag.Int("port", 8001, "Port")
 
 func main() {
 	flag.Parse()
@@ -35,6 +35,7 @@ func main() {
 			log.Print(err)
 			continue
 		}
+		log.Print(conn)
 		go handleConn(conn) // handle connections concurrently
 	}
 }
