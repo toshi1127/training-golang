@@ -1,448 +1,268 @@
-package main
-
-// ftp-responsecode
-// http://www.atmarkit.co.jp/fnetwork/rensai/netpro10/ftp-responsecode.html
-
+package main // main
 import (
 	"bufio"
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 )
 
-var remoteRoot string
-
-type ftpConn struct {
-	conn         net.Conn
-	prevCmd      string
-	dir          string
-	sep          string
-	username     string
-	password     string
-	addr         string
-	pasvListener net.Listener
+type Conn struct {
+	rootDir    string
+	workdir    string
+	reqUser    string
+	user       string
+	currentDir string
+	granted    bool
+	dataType   string
+	ctrlConn   *net.TCPConn
+	dataConn   *net.TCPConn
 }
 
-func newFTPConn(c net.Conn) *ftpConn {
-	separator := "/"
-	if runtime.GOOS == "windows" {
-		separator = "\\"
+func (conn *Conn) writeMessage(code int, message string, v ...interface{}) error {
+	msg := fmt.Sprintf(message, v...)
+	_, err := fmt.Fprintf(conn.ctrlConn, "%d %s\r\n", code, msg)
+	return err
+}
+
+func (conn *Conn) handleCommand(line string) {
+	tokens := strings.Fields(line)
+	opc := strings.ToUpper(tokens[0])
+	opr := tokens[1:]
+	switch opc {
+	// ACCESS CONTROL COMMANDS
+	case "USER":
+		conn.handleUserCommand(opc, opr)
+		return
+	case "PASS":
+		conn.handlePassCommand(opc, opr)
+		return
+	case "CWD":
+		conn.handleCwdCommand(opc, opr)
+		return
+	case "PWD":
+		conn.handlePwdCommand(opc, opr)
+		return
+	case "QUIT":
+		conn.handleQuitCommand(opc, opr)
+		return
+	// TRANSFER PARAMETER COMMANDS
+	case "PORT":
+		conn.handlePortCommand(opc, opr)
+		return
+	case "TYPE":
+		conn.handleTypeCommand(opc, opr)
+		return
+	case "STRU":
+		conn.handleStruCommand(opc, opr)
+		return
+	case "MODE":
+		conn.handleModeCommand(opc, opr)
+		return
+	// FTP SERVICE COMMANDS
+	case "RETR":
+		conn.handleRetrCommand(opc, opr)
+		return
+	default:
+		conn.writeMessage(500, "%s not understood", opc)
+		return
 	}
-	return &ftpConn{conn: c, dir: remoteRoot, sep: separator}
 }
 
-func (c *ftpConn) println(s ...interface{}) {
-	s = append(s, "\r\n")
-	_, err := fmt.Fprint(c.conn, s...)
+func (conn *Conn) handleUserCommand(opc string, opr []string) {
+	conn.reqUser = opr[0]
+	conn.writeMessage(331, "User name ok, password required")
+}
+
+func (conn *Conn) handlePassCommand(opc string, opr []string) {
+	ok, err := conn.checkPasswd(conn.user, opr[0])
 	if err != nil {
+		conn.writeMessage(550, "Checking password error")
+		return
+	}
+	if ok {
+		conn.user = conn.reqUser
+		conn.reqUser = ""
+		conn.writeMessage(230, "Password ok, continue")
+	} else {
+		conn.writeMessage(530, "Incorrect password, not logged in")
+	}
+}
+
+func (conn *Conn) handleCwdCommand(opc string, opr []string) {
+	path := conn.buildPath(opr[0])
+	if f, err := os.Stat(conn.rootDir + path); err != nil || !f.IsDir() {
+		conn.writeMessage(550, "Failed to change directory.")
+		return
+	}
+	conn.currentDir = path
+	conn.writeMessage(250, "Directory changed to "+path)
+}
+
+func (conn *Conn) handlePwdCommand(opc string, opr []string) {
+	message := fmt.Sprintf("\"%s\" is the current directory", conn.currentDir)
+	conn.writeMessage(257, message)
+}
+
+func (conn *Conn) handleRetlCommand(opc string, opr []string) {
+}
+
+func (conn *Conn) handleQuitCommand(opc string, opr []string) {
+	conn.writeMessage(221, "Goodbye")
+	conn.ctrlConn.Close()
+}
+
+func (conn *Conn) handlePortCommand(opc string, opr []string) {
+	nums := strings.Split(opr[0], ",")
+	portOne, _ := strconv.Atoi(nums[4])
+	portTwo, _ := strconv.Atoi(nums[5])
+	port := (portOne * 256) + portTwo
+	host := nums[0] + "." + nums[1] + "." + nums[2] + "." + nums[3]
+	dataConn, err := newSocket(host, port)
+	if err != nil {
+		conn.writeMessage(425, "Data connection failed")
+		return
+	}
+	conn.dataConn = dataConn
+	conn.writeMessage(200, "Connection established ("+strconv.Itoa(port)+")")
+}
+
+func (conn *Conn) handleTypeCommand(opc string, opr []string) {
+	if strings.ToUpper(opr[0]) == "A" {
+		conn.writeMessage(200, "Type set to ASCII")
+	} else if strings.ToUpper(opr[0]) == "I" {
+		conn.writeMessage(200, "Type set to binary")
+	} else {
+		conn.writeMessage(500, "Invalid type")
+	}
+}
+
+func (conn *Conn) handleStruCommand(opc string, opr []string) {
+	if strings.ToUpper(opr[0]) == "F" {
+		conn.writeMessage(200, "OK")
+	} else {
+		conn.writeMessage(504, "STRU is an obsolete command")
+	}
+}
+
+func (conn *Conn) handleModeCommand(opc string, opr []string) {
+	if strings.ToUpper(opr[0]) == "S" {
+		conn.writeMessage(200, "OK")
+	} else {
+		conn.writeMessage(504, "MODE is an obsolete command")
+	}
+}
+
+func (conn *Conn) handleRetrCommand(opc string, opr []string) {
+	fmt.Println("test")
+	path := conn.buildPath(opr[0])
+	f, err := os.Open(conn.rootDir + path)
+	if err != nil {
+		conn.writeMessage(550, "Failed to open file.")
+		return
+	}
+	defer f.Close()
+	conn.writeMessage(150, "Data transfer starting")
+	fmt.Println("test2")
+	io.Copy(conn.dataConn, f)
+	fmt.Println("test3")
+	conn.writeMessage(226, "Transfer complete.")
+	return
+}
+
+func (conn *Conn) checkPasswd(user string, pass string) (bool, error) {
+	return true, nil
+}
+
+func (conn *Conn) buildPath(filename string) string {
+	fullPath := ""
+	if len(filename) > 0 && filename[0:1] == "/" {
+		fullPath = filepath.Clean(filename)
+	} else if len(filename) > 0 && filename != "-a" {
+		fullPath = filepath.Clean(conn.currentDir + "/" + filename)
+	} else {
+		fullPath = filepath.Clean(conn.currentDir)
+	}
+	fullPath = strings.Replace(fullPath, "//", "/", -1)
+	return fullPath
+}
+
+func newSocket(host string, port int) (*net.TCPConn, error) {
+	connectTo := buildTCPString(host, port)
+	raddr, err := net.ResolveTCPAddr("tcp", connectTo)
+	if err != nil {
+		return nil, err
+	}
+	tcpConn, err := net.DialTCP("tcp", nil, raddr)
+	if err != nil {
+		return nil, err
+	}
+	return tcpConn, nil
+}
+
+func buildTCPString(hostname string, port int) (result string) {
+	if strings.Contains(hostname, ":") {
+		// ipv6
+		if port == 0 {
+			result = "[" + hostname + "]"
+		} else {
+			result = "[" + hostname + "]:" + strconv.Itoa(port)
+		}
+	} else {
+		// ipv4
+		if port == 0 {
+			result = hostname
+		} else {
+			result = hostname + ":" + strconv.Itoa(port)
+		}
+	}
+	return
+}
+
+func startSession(conn *net.TCPConn) {
+	var c Conn
+	c.ctrlConn = conn
+	if rootDir, err := os.Getwd(); err == nil {
+		fmt.Println(rootDir)
+		c.rootDir = rootDir
+	} else {
 		log.Fatal(err)
 	}
-}
-
-func (c *ftpConn) user(cmds []string) {
-	if len(cmds) < 2 {
-		c.println("501 Syntax error in parameters or arguments.")
-		return
-	}
-	c.username = cmds[1]
-	c.println("331 User name okay, need password.")
-}
-
-func (c *ftpConn) pass(cmds []string) {
-	if len(cmds) < 2 {
-		c.println("501 Syntax error in parameters or arguments.")
-		return
-	}
-	c.password = cmds[1]
-	c.println("230 logged in, proceed.")
-}
-
-func (c *ftpConn) port(cmds []string) {
-	if len(cmds) < 2 {
-		c.println("501 Syntax error in parameters or arguments.")
-		return
-	}
-	ips := strings.Split(cmds[1], ",")
-	if len(ips) != 6 {
-		c.println("501 Syntax error in parameters or arguments.")
-		return
-	}
-	p1, err := strconv.Atoi(ips[4])
-	if err != nil {
-		c.println("501 Syntax error in parameters or arguments.")
-		return
-	}
-	p2, err := strconv.Atoi(ips[5])
-	if err != nil {
-		c.println("501 Syntax error in parameters or arguments.")
-		return
-	}
-	c.addr = fmt.Sprintf("%s.%s.%s.%s:%d", ips[0], ips[1], ips[2], ips[3], p1*256+p2)
-	c.println("200 PORT Command okay.")
-}
-
-func (c *ftpConn) pasv() {
-	var err error
-	c.pasvListener, err = net.Listen("tcp4", "")
-	if err != nil {
-		c.println("451 aborted. Local error in processing.")
-		return
-	}
-	_, port, err := net.SplitHostPort(c.pasvListener.Addr().String())
-	if err != nil {
-		c.println("451 aborted. Local error in processing.")
-		c.pasvListener.Close()
-		return
-	}
-	host, _, err := net.SplitHostPort(c.conn.LocalAddr().String())
-	if err != nil {
-		c.println("451 aborted. Local error in processing.")
-		c.pasvListener.Close()
-		return
-	}
-	ipAdder, err := net.ResolveIPAddr("ip4", host)
-	if err != nil {
-		c.println("451 aborted. Local error in processing.")
-		c.pasvListener.Close()
-		return
-	}
-	ips := ipAdder.IP.To4()
-	pVal, err := strconv.Atoi(port)
-	if err != nil {
-		c.println("451 aborted. Local error in processing.")
-		c.pasvListener.Close()
-		return
-	}
-	adder := fmt.Sprintf("%d,%d,%d,%d", ips[0], ips[1], ips[2], ips[3]) + fmt.Sprintf(",%d,%d", pVal/256, pVal%256)
-	c.println(fmt.Sprintf("227 Entering Passive Mode (%s).", adder))
-}
-
-func (c *ftpConn) syst() {
-	var osType string
-	switch runtime.GOOS {
-	case "windows":
-		osType = "Windows NT"
-	default:
-		osType = "UNIX"
-	}
-	c.println(fmt.Sprintf("215 %s", osType))
-}
-
-func (c *ftpConn) pwd() {
-	relPath, err := filepath.Rel(remoteRoot, c.dir)
-	if err != nil {
-		log.Print(err)
-		c.println("451 Requested action aborted. Local error in processing.")
-		return
-	}
-	relPath = strings.Replace(relPath, "\\", "/", -1)
-	if []rune(relPath)[0] == '.' {
-		relPath = "/"
-	} else {
-		relPath = "/" + relPath
-	}
-	c.println(fmt.Sprintf("257 \"%s\" is current directory", relPath))
-}
-
-func (c *ftpConn) list(cmds []string) {
-	var target string
-	var err error
-	switch len(cmds) {
-	case 1:
-		target = "."
-	case 2:
-		target = cmds[1]
-	default:
-		c.println("501 Syntax error in parameters or arguments.")
-		return
-	}
-	conn, err := c.createDataConn()
-	if err != nil {
-		c.println("425 Can't open data connection.")
-		return
-	}
-	defer conn.Close()
-	c.println("150 Opening ASCII mode data connection")
-
-	fullPath, err := c.resolveFullPath(target)
-	if err != nil {
-		c.println("451 Requested action aborted. Local error in processing.")
-		return
-	}
-	stat, err := os.Stat(fullPath)
-	if err != nil || !stat.IsDir() {
-		c.println("451 Requested action aborted. Local error in processing.")
-		return
-	}
-	if err != nil {
-		fmt.Println(err)
-		c.println("450 Requested file action not taken.")
-		return
-	}
-	if stat.IsDir() {
-		var files []os.FileInfo
-		files, err = ioutil.ReadDir(fullPath)
-		if err != nil {
-			fmt.Println(err)
-			c.println("550 Requested action not taken.")
-			return
+	c.writeMessage(220, "FTP Server Ready")
+	go func() {
+		defer func() {
+			conn.Close()
+			log.Println("close controll connection")
+		}()
+		input := bufio.NewScanner(conn)
+		for input.Scan() {
+			c.handleCommand(input.Text())
 		}
-		for _, f := range files {
-			if strings.ToUpper(cmds[0]) == "LIST" {
-				_, err = fmt.Fprintf(conn, "%s %d\t%s\t%s\r\n", f.Mode(), f.Size(), f.ModTime(), f.Name())
-			} else {
-				_, err = fmt.Fprintf(conn, "%s\r\n", f.Name())
-			}
-			if err != nil {
-				c.println("426 Connection closed; transfer aborted.")
-				return
-			}
-		}
-	} else {
-		if strings.ToUpper(cmds[0]) == "LIST" {
-			_, err = fmt.Fprintf(conn, "%s %d\t%s\t%s\r\n", stat.Mode(), stat.Size(), stat.ModTime(), stat.Name())
-		} else {
-			_, err = fmt.Fprintf(conn, "%s\r\n", stat.Name())
-		}
-		if err != nil {
-			c.println("426 Connection closed; transfer aborted.")
-			return
-		}
-	}
-	c.println("226 Closing data connection.")
-}
-
-func (c *ftpConn) createDataConn() (conn io.ReadWriteCloser, err error) {
-	switch c.prevCmd {
-	case "PORT":
-		conn, err = net.Dial("tcp", c.addr)
-	case "PASV":
-		conn, err = c.pasvListener.Accept()
-	default:
-		return nil, fmt.Errorf("previuos command not Connection: %s", c.prevCmd)
-	}
-	return
-}
-
-func (c *ftpConn) cwd(cmds []string) {
-	if len(cmds) != 2 {
-		c.println("501 Syntax error, command unrecognized.")
-		return
-	}
-	fullPath, err := c.resolveFullPath(cmds[1])
-	if err != nil {
-		c.println("451 Requested action aborted. Local error in processing.")
-		return
-	}
-	stat, err := os.Stat(fullPath)
-	if err != nil || !stat.IsDir() {
-		c.println("451 Requested action aborted. Local error in processing.")
-		return
-	}
-	c.dir = fullPath
-	fmt.Println(c.dir)
-	c.println("250 Requested file action okay, completed.")
-}
-
-func (c *ftpConn) resolveFullPath(p string) (fullPath string, err error) {
-	if []rune(p)[0] == '/' {
-		root := remoteRoot + string(filepath.Separator)
-		fullPath = strings.Replace(p, "/", root, 1)
-	} else {
-		fullPath = filepath.Join(c.dir, p)
-	}
-	rel, err := filepath.Rel(remoteRoot, fullPath)
-	if err != nil {
-		return
-	}
-	if strings.Split(rel, string(filepath.Separator))[0] == ".." {
-		err = fmt.Errorf("%s upper remote root", p)
-		return
-	}
-	return
-}
-
-func (c *ftpConn) size(cmds []string) {
-	if len(cmds) != 2 {
-		c.println("501 Syntax error in parameters or arguments.")
-		return
-	}
-
-	fullPath, err := c.resolveFullPath(cmds[1])
-	if err != nil {
-		c.println("451 Requested action aborted. Local error in processing.")
-		return
-	}
-	stat, err := os.Stat(fullPath)
-	if err != nil {
-		log.Print(err)
-		c.println("451 Requested action aborted. Local error in processing.")
-		return
-	}
-	if stat.IsDir() {
-		c.println("450 Requested file action not taken.")
-		return
-	}
-	c.println(fmt.Sprintf("213 %d", stat.Size()))
-}
-
-func (c *ftpConn) retr(cmds []string) {
-	if len(cmds) != 2 {
-		c.println("501 Syntax error in parameters or arguments.")
-		return
-	}
-	fullPath, err := c.resolveFullPath(cmds[1])
-	if err != nil {
-		c.println("451 Requested action aborted. Local error in processing.")
-		return
-	}
-	file, err := os.Open(fullPath)
-	if err != nil {
-		c.println("450 Requested file action not taken.")
-		return
-	}
-	stat, err := os.Stat(fullPath)
-	if err != nil || stat.IsDir() {
-		c.println("450 Requested file action not taken.")
-		return
-	}
-	conn, err := c.createDataConn()
-	if err != nil {
-		c.println("425 Can't open data connection.")
-		return
-	}
-	defer conn.Close()
-	c.println(fmt.Sprintf("150 Opening BINARY mode data connection for '%s'(%d bytes).", stat.Name(), stat.Size()))
-	_, err = io.Copy(conn, file)
-	if err != nil {
-		c.println("450 Requested file action not taken.")
-		return
-	}
-	c.println("226 Closing data connection.")
-}
-
-func (c *ftpConn) mkd(cmds []string) {
-	if len(cmds) != 2 {
-		c.println("501 Syntax error in parameters or arguments.")
-		return
-	}
-	fullPath, err := c.resolveFullPath(cmds[1])
-	if err != nil {
-		c.println("451 Requested action aborted. Local error in processing.")
-		return
-	}
-	if err := os.Mkdir(fullPath, 0777); err != nil {
-		c.println("450 	Requested file action not taken.")
-		return
-	}
-	c.println(fmt.Sprintf("\"%s\" created.", cmds[1]))
-}
-
-func (c *ftpConn) stor(cmds []string) {
-	if len(cmds) != 2 {
-		c.println("501 Syntax error in parameters or arguments.")
-		return
-	}
-	file, err := os.Create(cmds[1])
-	if err != nil {
-		c.println("550 Requested action not taken.")
-		return
-	}
-	defer file.Close()
-	c.println("150 File status okay; about to open data connection.")
-	conn, err := c.createDataConn()
-	if err != nil {
-		c.println("425 Can't open data connection.")
-		return
-	}
-	defer conn.Close()
-	if _, err := io.Copy(file, conn); err != nil {
-		c.println("450 	Requested file action not taken.")
-		return
-	}
-	c.println("226 Closing data connection.")
-}
-
-func (c *ftpConn) handleConn() {
-	defer c.conn.Close()
-	s := bufio.NewScanner(c.conn)
-	c.println("220 Ready.")
-LOOP:
-	for s.Scan() {
-		log.Println(s.Text())
-		cmds := strings.Fields(s.Text())
-		if len(cmds) == 0 {
-			continue
-		}
-		switch strings.ToUpper(cmds[0]) {
-		case "USER":
-			c.user(cmds)
-		case "PASS":
-			c.pass(cmds)
-		case "PORT":
-			c.port(cmds)
-		case "SYST":
-			c.syst()
-		case "XPWD":
-			c.pwd()
-		case "PWD":
-			c.pwd()
-		case "LIST":
-			c.list(cmds)
-		case "NLST":
-			c.list(cmds)
-		case "PASV":
-			c.pasv()
-		case "CWD":
-			c.cwd(cmds)
-		case "SIZE":
-			c.size(cmds)
-		case "RETR":
-			c.retr(cmds)
-		case "MKD":
-			c.mkd(cmds)
-		case "XMKD":
-			c.mkd(cmds)
-		case "STOR":
-			c.stor(cmds)
-		case "QUIT":
-			c.println("221 Goodbye.")
-			break LOOP
-		default:
-			c.println("502 Command not implemented.")
-		}
-		c.prevCmd = strings.ToUpper(cmds[0])
-	}
-	log.Printf("Close: %s", c.conn.RemoteAddr().String())
+	}()
 }
 
 func main() {
-	var err error
-	remoteRoot, err = os.Getwd()
-	if err != nil {
-		log.Fatal(err)
-	}
-	port := flag.Int("p", 21, "FTP port")
+	port := flag.Int("port", 21, "port to bind")
 	flag.Parse()
-	listener, err := net.Listen("tcp4", fmt.Sprintf(":%d", *port))
+	addr, err := net.ResolveTCPAddr("tcp4", fmt.Sprintf("localhost:%d", *port))
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("err")
 	}
-	log.Println("run FTP Server")
+	ctrlListener, err := net.ListenTCP("tcp4", addr)
+	if err != nil {
+		log.Fatal("err")
+	}
 	for {
-		conn, err := listener.Accept()
+		conn, err := ctrlListener.AcceptTCP()
 		if err != nil {
-			log.Print(err)
+			log.Fatal("err")
 			continue
 		}
-		go newFTPConn(conn).handleConn()
+		startSession(conn)
 	}
 }
